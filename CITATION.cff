@@ -1,0 +1,18 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated manuscript and this repository."
+title: "Fibroblast ABM: a spatial agent-based model of fibroblast proliferation and migration"
+type: software
+version: 0.1.0
+date-released: 2026-10-08
+authors:
+  - family-names: "REPLACE_WITH_FAMILY_NAME"
+    given-names: "REPLACE_WITH_GIVEN_NAME"
+repository-code: "https://github.com/REPLACE_WITH_USERNAME/fibroblast-abm"
+license: MIT
+keywords:
+  - agent-based model
+  - NetLogo
+  - fibroblast
+  - proliferation
+  - migration
+  - computational biology

@@ -1,0 +1,256 @@
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;; FIBROBLAST AGENT-BASED MODEL
+;; One tick = 1 hour
+;; Interface variables expected as widgets:
+;;   FBS
+;;   migration
+;;   initial-passage
+;;   initial-cell-density
+;;   treatment
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+globals [
+  nutrient-consumption-rate
+]
+
+turtles-own [
+  passage
+  active?
+  base-growth-rate
+  time-since-division
+  division-threshold
+]
+
+patches-own [
+  nutrients
+]
+
+to-report senescence-factor [ p ]
+  if p < 10 [ report 1 ]
+  if p >= 30 [ report 0 ]
+  report (30 - p) / 20
+end
+
+to-report migration-factor [ p ]
+  if p < 20 [ report 1 ]
+  if p >= 30 [ report 0 ]
+  report (30 - p) / 10
+end
+
+to-report contact-inhibition
+  let nc count (other turtles in-radius 0.3)
+  if nc > 4 [ report 0 ]
+  report 1
+end
+
+to-report paracrine-stimulation
+  let np count (other turtles in-radius 1)
+  if np = 0 [ report 0.1 ]
+  if np = 1 [ report 0.5 ]
+  if np >= 2 [ report 1 ]
+end
+
+to-report growth-adjustment
+  report (contact-inhibition * paracrine-stimulation)
+end
+
+to-report crowding-factor
+  let neighbor-count count (other turtles in-radius 0.5)
+  if neighbor-count = 0 [ report 1 ]
+  if neighbor-count <= 2 [ report 0.6 ]
+  if neighbor-count <= 4 [ report 0.3 ]
+  report 0.1
+end
+
+to-report global-passage
+  ifelse any? turtles
+  [ report min [ passage ] of turtles ]
+  [ report 0 ]
+end
+
+to-report average-senescence
+  ifelse any? turtles
+  [ report mean [ senescence-factor passage ] of turtles ]
+  [ report 0 ]
+end
+
+to attempt-move [ dist ]
+  let oldx xcor
+  let oldy ycor
+
+  fd dist
+
+  if xcor > max-pxcor [ set xcor max-pxcor ]
+  if xcor < min-pxcor [ set xcor min-pxcor ]
+  if ycor > max-pycor [ set ycor max-pycor ]
+  if ycor < min-pycor [ set ycor min-pycor ]
+
+  if any? other turtles in-radius 0.1 [
+    setxy oldx oldy
+  ]
+end
+
+to setup
+  clear-all
+
+  ;; Default consumption rate for all treatments.
+  set nutrient-consumption-rate 0.001
+
+  ask patches [
+    set nutrients (FBS / 10)
+  ]
+
+  let init-cells initial-cell-density
+
+  if treatment = "Control" [
+    let local-base 0.0593
+    create-turtles init-cells [ initialize-cell local-base blue ]
+  ]
+
+  if treatment = "Polynucleotides" [
+    let local-base 0.0629
+    create-turtles init-cells [ initialize-cell local-base green ]
+  ]
+
+  if treatment = "Newest" [
+    let local-base 0.0579
+    create-turtles init-cells [ initialize-cell local-base red ]
+  ]
+
+  if treatment = "Newest_half" [
+    let local-base 0.0503
+    create-turtles init-cells [ initialize-cell local-base orange ]
+  ]
+
+  if treatment = "HA" [
+    let local-base 0.0672
+    create-turtles init-cells [ initialize-cell local-base violet ]
+  ]
+
+  reset-ticks
+end
+
+to initialize-cell [ rate col ]
+  setxy random-xcor random-ycor
+  set color col
+  set passage initial-passage
+  set active? true
+  set base-growth-rate rate
+
+  ;; Desynchronize the initial population.
+  set time-since-division random 24
+
+  let dt random-normal 24 5
+  if dt < 1 [ set dt 1 ]
+  set division-threshold dt
+end
+
+to go
+  if any? turtles [
+    if all? turtles [ passage >= 30 ] [
+      user-message "All cells have reached passage >= 30. Stopping."
+      stop
+    ]
+  ]
+
+  ask turtles [
+    set time-since-division time-since-division + 1
+
+    if active? [
+      ;; Migration
+      rt random 360
+      let move-dist migration * (migration-factor passage) * crowding-factor
+      attempt-move move-dist
+
+      ;; Local growth modifiers
+      let g-factor growth-adjustment
+      let s-factor senescence-factor passage
+
+      ;; Local nutrient state before consumption
+      let local-nutrients [ nutrients ] of patch-here
+
+      ;; Local nutrient consumption
+      ask patch-here [
+        set nutrients max (list (nutrients - nutrient-consumption-rate) 0)
+      ]
+
+      ;; Effective hourly division propensity once the cell-cycle threshold is met
+      let effective-growth-rate (
+        base-growth-rate
+        * (FBS / 10)
+        * s-factor
+        * g-factor
+        * local-nutrients
+      )
+
+      if time-since-division >= division-threshold [
+        if random-float 1 < effective-growth-rate [
+          set passage passage + 1
+          set time-since-division 0
+
+          let new-dt random-normal 24 5
+          if new-dt < 1 [ set new-dt 1 ]
+          set division-threshold new-dt
+
+          hatch 1 [
+            rt random 360
+            attempt-move (move-dist * 0.5)
+            set color [ color ] of myself
+            set passage [ passage ] of myself
+            set active? true
+            set base-growth-rate [ base-growth-rate ] of myself
+            set time-since-division 0
+
+            let dt2 random-normal 24 5
+            if dt2 < 1 [ set dt2 1 ]
+            set division-threshold dt2
+          ]
+        ]
+      ]
+    ]
+  ]
+
+  tick
+end
+
+to screen-by-FBS
+  let max-ticks 1000
+  let fbs-values [0.5 1.0 5 10]
+
+  if file-exists? "FBS_screen.csv" [ file-delete "FBS_screen.csv" ]
+  file-open "FBS_screen.csv"
+  file-print "FBS,tick,cell_count"
+
+  foreach fbs-values [ f ->
+    set FBS f
+    setup
+
+    repeat max-ticks [
+      go
+      file-print (word FBS "," ticks "," count turtles)
+    ]
+  ]
+
+  file-close
+end
+
+to screen-by-migration
+  let max-ticks 300
+  let mig-values [0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0]
+
+  if file-exists? "migration_screen.csv" [ file-delete "migration_screen.csv" ]
+  file-open "migration_screen.csv"
+  file-print "migration,tick,cell_count"
+
+  foreach mig-values [ m ->
+    set migration m
+    setup
+
+    repeat max-ticks [
+      go
+      file-print (word migration "," ticks "," count turtles)
+    ]
+  ]
+
+  file-close
+end
